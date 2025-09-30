@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""リアルタイム温度・電力モニター GUI"""
+
 import sys
 import time
 import datetime as dt
@@ -9,102 +11,106 @@ import queue
 import tkinter as tk
 from tkinter import messagebox
 import tkinter.font as tkfont
+from typing import List, Optional
 
+import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.dates import DateFormatter
 
+import japanize_matplotlib  # noqa: F401  # フォントを日本語対応させる
+
 from compowayf_driver import CompoWayFDriver
+
 
 # ==== シリアル・計測設定 ====
 PORT = "/dev/ttyUSB0"
 E5CD_NODE = "01"
+CURRENT_NODE = "02"
 SID = "0"
-POLL_MS = 0  # 0なら応答を受け次第すぐに次コマンドを送る
-VOLTAGE_V = 200.0  # 指示に従い電圧は固定
+POLL_MS = 0  # 応答を受け次第次コマンドを送信
+VOLTAGE_V = 200.0  # 指定通り電圧は固定
 
-# 電力計測対象システム（必要に応じて node を変更）
-POWER_SYSTEMS = [
-    {"id": "system_a", "label": "システムA", "node": "02", "color": "#1f6feb"},
-    {"id": "system_b", "label": "システムB", "node": "03", "color": "#60a5fa"},
-]
 
-# ---- 表示設定 ----
-BG_COLOR = "#0b1220"
-CARD_COLOR = "#111c34"
+# ---- デザイン設定 ----
+BG_COLOR = "#060b16"
+PANEL_COLOR = "#0e1626"
 ACCENT_COLOR = "#38bdf8"
-TEXT_COLOR = "#f8fafc"
+TEXT_PRIMARY = "#f8fafc"
+TEXT_SECONDARY = "#94a3b8"
 GRID_COLOR = "#1f2a44"
-TEMP_COLOR = "#f87171"
-TEMP_LINEWIDTH = 3.0
-POWER_LINEWIDTH = 3.2
-POWER_STABLE_LINEWIDTH = 2.4
-LOGO_IMAGE_PATH = None  # 実際のロゴ画像に差し替える場合はファイルパスを指定
+TEMP_COLOR = "#ef4444"
+POWER_COLOR = "#2563eb"
 
-# 安定判定パラメータ
-STABLE_MIN_DURATION_SEC = 60.0
-STABLE_TOLERANCE_WH = 0.05  # 安定とみなす許容幅（必要に応じて調整）
+
+# ---- 画像プレースホルダ設定 ----
+DEVICE1_IMAGE_PATH = None
+DEVICE2_IMAGE_PATH = None
+LOGO_IMAGE_PATH = None
 
 
 class App(tk.Tk):
-    def __init__(self):
+    """温度・電力量を表示する Tkinter アプリ"""
+
+    def __init__(self) -> None:
         super().__init__()
         self.title("リアルタイム温度・電力モニター")
         self.configure(bg=BG_COLOR)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # Tk全体のフォントを大きめに
+        matplotlib.rcParams.update(
+            {
+                "axes.titlesize": 26,
+                "axes.labelsize": 20,
+                "xtick.labelsize": 16,
+                "ytick.labelsize": 16,
+            }
+        )
+
         try:
             default_font = tkfont.nametofont("TkDefaultFont")
             default_font.configure(family="Yu Gothic UI", size=16)
         except tk.TclError:
             pass
 
-        # データ保持
         self.t0 = dt.datetime.now()
         self.temp_times = []
         self.temp_values = []
-        self.system_series = {}
-        for system in POWER_SYSTEMS:
-            self.system_series[system["id"]] = {
-                "times_current": [],
-                "currents": [],
-                "times_power": [],
-                "power_wh": [],
-                "stable_avg": None,
-                "line": None,
-                "stable_line": None,
-                "reference_text": None,
-            }
-        self.sv_value = None
+        self.current_times = []
+        self.currents = []
+        self.power_times = []
+        self.power_values = []
 
-        # ドライバ初期化
         try:
             self.cwf = CompoWayFDriver(port=PORT)
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover - GUI メッセージ用
             messagebox.showerror("シリアル接続エラー", str(exc))
             self.destroy()
             sys.exit(1)
 
         self.io_lock = threading.Lock()
 
-        # レイアウト構築
         self.columnconfigure(0, weight=4)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
-        graph_frame = tk.Frame(self, bg=BG_COLOR)
-        graph_frame.grid(row=0, column=0, sticky="nsew", padx=(24, 12), pady=24)
+        left_frame = tk.Frame(self, bg=BG_COLOR)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(24, 12), pady=24)
+        left_frame.columnconfigure(0, weight=5)
+        left_frame.columnconfigure(1, weight=2)
+        left_frame.rowconfigure(0, weight=1)
 
-        info_frame = tk.Frame(self, bg=BG_COLOR)
-        info_frame.grid(row=0, column=1, sticky="nsew", padx=(12, 24), pady=24)
-        info_frame.rowconfigure(0, weight=0)
-        info_frame.rowconfigure(1, weight=1)
+        right_frame = tk.Frame(self, bg=BG_COLOR)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(12, 24), pady=24)
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(0, weight=4)
+        right_frame.rowconfigure(1, weight=4)
+        right_frame.rowconfigure(2, weight=2)
 
-        self._build_info_panel(info_frame)
-        self._build_figure(graph_frame)
+        self._build_graph_area(left_frame)
+        self._build_setpoint_panel(left_frame)
+        self._build_showcase(right_frame)
 
-        # 通信結果キュー
         self.result_q = queue.Queue()
         self.stop_evt = threading.Event()
         self.worker = threading.Thread(target=self.poll_worker, daemon=True)
@@ -113,266 +119,217 @@ class App(tk.Tk):
         self.after(100, self.drain_results)
 
     # ------------------------------------------------------------------
-    def _build_info_panel(self, parent: tk.Frame):
-        card = tk.Frame(parent, bg=CARD_COLOR, bd=0, relief="flat", padx=20, pady=20)
-        card.grid(row=0, column=0, sticky="ew")
-        card.columnconfigure(0, weight=1)
+    def _build_graph_area(self, parent: tk.Frame) -> None:
+        fig = Figure(figsize=(12, 7), dpi=100)
+        fig.patch.set_facecolor(BG_COLOR)
+        gs = fig.add_gridspec(2, 1, hspace=0.32)
+        self.ax_temp = fig.add_subplot(gs[0])
+        self.ax_power = fig.add_subplot(gs[1], sharex=self.ax_temp)
+        fig.subplots_adjust(left=0.08, right=0.97, top=0.94, bottom=0.09)
+
+        for ax in (self.ax_temp, self.ax_power):
+            ax.set_facecolor(PANEL_COLOR)
+            ax.tick_params(axis="x", colors=TEXT_PRIMARY, labelsize=16, width=1.8, length=8, pad=10)
+            ax.tick_params(axis="y", colors=TEXT_PRIMARY, labelsize=16, width=1.8, length=8, pad=10)
+            for spine in ax.spines.values():
+                spine.set_color("#1e293b")
+            ax.grid(True, color=GRID_COLOR, alpha=0.55, linewidth=1.2)
+
+        self.ax_temp.set_title("温度の推移", color=TEXT_PRIMARY, fontweight="bold", pad=16)
+        self.ax_temp.set_ylabel("温度 (℃)", color=TEXT_PRIMARY, labelpad=18)
+        self.ax_temp.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
+        self.ax_temp.tick_params(axis="x", which="both", labelbottom=False)
+
+        self.ax_power.set_title("直近1分相当の消費電力量", color=TEXT_PRIMARY, fontweight="bold", pad=18)
+        self.ax_power.set_ylabel("電力量 (Wh)", color=TEXT_PRIMARY, labelpad=20)
+        self.ax_power.set_xlabel("時刻", color=TEXT_PRIMARY, labelpad=22)
+        self.ax_power.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
+
+        (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=4.0)
+        (self.power_line,) = self.ax_power.plot([], [], color=POWER_COLOR, linewidth=4.2, label="消費電力量")
+
+        legend = self.ax_power.legend(
+            loc="upper left",
+            facecolor="#132041",
+            edgecolor="#1e293b",
+            framealpha=0.9,
+            fontsize=16,
+        )
+        for text in legend.get_texts():
+            text.set_color(TEXT_PRIMARY)
+
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        self.canvas_widget = canvas.get_tk_widget()
+        self.canvas_widget.configure(bg=BG_COLOR, highlightthickness=0)
+        self.canvas_widget.grid(row=0, column=0, sticky="nsew")
+        self.canvas = canvas
+        self.canvas.draw_idle()
+
+    def _build_setpoint_panel(self, parent: tk.Frame) -> None:
+        panel = tk.Frame(parent, bg=PANEL_COLOR, bd=0, relief="flat", padx=24, pady=24)
+        panel.grid(row=0, column=1, sticky="n", padx=(24, 0))
+        panel.columnconfigure(0, weight=1)
 
         title = tk.Label(
-            card,
+            panel,
             text="設定温度",
-            font=("Yu Gothic UI", 20, "bold"),
-            fg=TEXT_COLOR,
-            bg=CARD_COLOR,
+            font=("Yu Gothic UI", 24, "bold"),
+            fg=TEXT_PRIMARY,
+            bg=PANEL_COLOR,
         )
         title.grid(row=0, column=0, sticky="w")
 
         self.lbl_sv_value = tk.Label(
-            card,
+            panel,
             text="-- ℃",
-            font=("Yu Gothic UI", 40, "bold"),
+            font=("Yu Gothic UI", 48, "bold"),
             fg=ACCENT_COLOR,
-            bg=CARD_COLOR,
+            bg=PANEL_COLOR,
         )
-        self.lbl_sv_value.grid(row=1, column=0, sticky="w", pady=(12, 0))
+        self.lbl_sv_value.grid(row=1, column=0, sticky="w", pady=(18, 6))
 
-        subtitle = tk.Label(
-            card,
-            text="制御装置から取得した最新の設定値",
-            font=("Yu Gothic UI", 16),
-            fg="#94a3b8",
-            bg=CARD_COLOR,
+        caption = tk.Label(
+            panel,
+            text="制御装置から取得した最新値",
+            font=("Yu Gothic UI", 18),
+            fg=TEXT_SECONDARY,
+            bg=PANEL_COLOR,
         )
-        subtitle.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        caption.grid(row=2, column=0, sticky="w")
 
-        logo_card = tk.Frame(parent, bg=CARD_COLOR, bd=0, relief="flat", padx=20, pady=20)
-        logo_card.grid(row=1, column=0, sticky="nsew", pady=(24, 0))
-        logo_card.columnconfigure(0, weight=1)
-        logo_card.rowconfigure(0, weight=0)
-        logo_card.rowconfigure(1, weight=1)
+    def _build_showcase(self, parent: tk.Frame) -> None:
+        sections = [
+            ("デバイス1", DEVICE1_IMAGE_PATH, "熱風循環式エアヒーター\nLHS 410 SF-R"),
+            ("デバイス2", DEVICE2_IMAGE_PATH, "熱風循環式高圧送風機\nチヌーク"),
+            ("ロゴ", LOGO_IMAGE_PATH, "企業ロゴ"),
+        ]
 
-        logo_title = tk.Label(
-            logo_card,
-            text="企業ロゴ表示エリア",
-            font=("Yu Gothic UI", 18, "bold"),
-            fg=TEXT_COLOR,
-            bg=CARD_COLOR,
-        )
-        logo_title.grid(row=0, column=0, sticky="nw")
+        for idx, (_, path, caption) in enumerate(sections):
+            frame = tk.Frame(parent, bg=PANEL_COLOR, padx=16, pady=16)
+            frame.grid(row=idx, column=0, sticky="nsew", pady=(0 if idx == 0 else 18, 0))
+            frame.columnconfigure(0, weight=1)
+            frame.rowconfigure(0, weight=1)
 
-        self.logo_image = self._load_logo_image()
-        self.logo_label = tk.Label(
-            logo_card,
-            image=self.logo_image,
-            text="ロゴをここに配置",
-            compound="center",
-            font=("Yu Gothic UI", 20, "bold"),
-            fg=TEXT_COLOR,
-            bg=CARD_COLOR,
-        )
-        self.logo_label.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+            image = self._load_image(path, width=360, height=240 if idx < 2 else 160)
+            label = tk.Label(frame, image=image, bg=PANEL_COLOR)
+            label.image = image
+            label.grid(row=0, column=0, sticky="nsew")
 
-    def _build_figure(self, parent: tk.Frame):
-        fig = Figure(figsize=(12, 7), dpi=100)
-        fig.patch.set_facecolor(BG_COLOR)
-        self.ax_temp = fig.add_subplot(211)
-        self.ax_power = fig.add_subplot(212, sharex=self.ax_temp)
-        fig.subplots_adjust(left=0.08, right=0.88, top=0.95, bottom=0.08, hspace=0.28)
-
-        for ax in (self.ax_temp, self.ax_power):
-            ax.set_facecolor("#0f1a2f")
-            ax.tick_params(axis="x", colors=TEXT_COLOR, labelsize=12)
-            ax.tick_params(axis="y", colors=TEXT_COLOR, labelsize=12)
-            for spine in ax.spines.values():
-                spine.set_color("#1e293b")
-            ax.grid(True, color=GRID_COLOR, alpha=0.55, linewidth=1.0)
-
-        self.ax_temp.set_title("温度の推移", fontsize=20, color=TEXT_COLOR, fontweight="bold", pad=14)
-        self.ax_temp.set_ylabel("温度 (℃)", fontsize=16, color=TEXT_COLOR, labelpad=12)
-        self.ax_temp.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
-        self.ax_temp.tick_params(axis="x", which="both", labelbottom=False)
-
-        self.ax_power.set_title("消費電力量の推移（直近1分相当）", fontsize=20, color=TEXT_COLOR, fontweight="bold", pad=14)
-        self.ax_power.set_ylabel("電力量 (Wh)", fontsize=16, color=TEXT_COLOR, labelpad=12)
-        self.ax_power.set_xlabel("時刻", fontsize=16, color=TEXT_COLOR, labelpad=12)
-        self.ax_power.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
-
-        (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=TEMP_LINEWIDTH)
-
-        legend_handles = []
-        for idx, system in enumerate(POWER_SYSTEMS):
-            line, = self.ax_power.plot([], [], color=system["color"], linewidth=POWER_LINEWIDTH, label=system["label"])
-            stable_line = self.ax_power.axhline(
-                y=0.0,
-                color=system["color"],
-                linewidth=POWER_STABLE_LINEWIDTH,
-                linestyle="--",
-                alpha=0.75,
-                visible=False,
+            caption_label = tk.Label(
+                frame,
+                text=caption,
+                font=("Yu Gothic UI", 18, "bold" if idx < 2 else "normal"),
+                fg=TEXT_PRIMARY,
+                bg=PANEL_COLOR,
+                justify="center",
             )
-            ref_text = self.ax_power.text(
-                1.02,
-                0.9 - idx * 0.12,
-                f"{system['label']} 安定値: ---",
-                transform=self.ax_power.transAxes,
-                fontsize=14,
-                fontweight="bold",
-                color=system["color"],
-                ha="left",
-                va="center",
-                clip_on=False,
-            )
-            self.system_series[system["id"]]["line"] = line
-            self.system_series[system["id"]]["stable_line"] = stable_line
-            self.system_series[system["id"]]["reference_text"] = ref_text
-            legend_handles.append(line)
+            caption_label.grid(row=1, column=0, sticky="ew", pady=(12, 0))
 
-        legend = self.ax_power.legend(
-            handles=legend_handles,
-            loc="upper left",
-            facecolor="#132041",
-            framealpha=0.9,
-            edgecolor="#1e293b",
-            fontsize=12,
-        )
-        for text in legend.get_texts():
-            text.set_color(TEXT_COLOR)
-
-        self.canvas = FigureCanvasTkAgg(fig, master=parent)
-        canvas_widget = self.canvas.get_tk_widget()
-        canvas_widget.configure(bg=BG_COLOR, highlightthickness=0)
-        canvas_widget.pack(fill=tk.BOTH, expand=True)
-        self.canvas.draw_idle()
-
-    def _load_logo_image(self):
-        if LOGO_IMAGE_PATH:
+    def _load_image(self, path: Optional[str], width: int, height: int) -> tk.PhotoImage:
+        if path:
             try:
-                return tk.PhotoImage(file=LOGO_IMAGE_PATH)
+                return tk.PhotoImage(file=path)
             except tk.TclError:
                 pass
-        width, height = 360, 180
-        img = tk.PhotoImage(width=width, height=height)
+
+        image = tk.PhotoImage(width=width, height=height)
         for x in range(width):
             blend = x / max(1, width - 1)
-            r = int(17 + (56 - 17) * blend)
-            g = int(28 + (130 - 28) * blend)
-            b = int(52 + (190 - 52) * blend)
+            r = int(18 + (46 - 18) * blend)
+            g = int(30 + (110 - 30) * blend)
+            b = int(60 + (180 - 60) * blend)
             color = f"#{r:02x}{g:02x}{b:02x}"
-            img.put(color, to=(x, 0, x + 1, height))
-        return img
+            image.put(color, to=(x, 0, x + 1, height))
+        overlay_color = "#1f2937"
+        image.put(overlay_color, to=(0, height - 48, width, height))
+        return image
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _integrate_power_wh(times, currents, now, voltage_v, window_sec=60.0):
+    def _integrate_power_wh(
+        times: List[dt.datetime],
+        currents: List[float],
+        now: dt.datetime,
+        voltage_v: float,
+        window_sec: float = 60.0,
+    ) -> float:
         if not times or not currents:
             return 0.0
-        t_start = now - dt.timedelta(seconds=window_sec)
 
-        n = len(times)
-        idx = n - 1
-        while idx > 0 and times[idx - 1] >= t_start:
-            idx -= 1
+        cutoff = now - dt.timedelta(seconds=window_sec)
 
-        pts = []
-        if idx > 0 and times[idx - 1] <= t_start <= times[idx]:
-            t0, i0 = times[idx - 1], currents[idx - 1]
-            t1, i1 = times[idx], currents[idx]
-            if t1 > t0:
-                span = (t1 - t0).total_seconds()
-                ratio = (t_start - t0).total_seconds() / span
-                ratio = max(0.0, min(1.0, ratio))
-                i_interp = i0 + (i1 - i0) * ratio
-                pts.append((t_start, i_interp))
-        for pos in range(idx, n):
-            if times[pos] >= t_start:
-                pts.append((times[pos], currents[pos]))
-        if len(pts) < 2:
+        if times[-1] < cutoff:
             return 0.0
 
+        pts = []
+        n = len(times)
+
+        # 直近 window 内のデータ列を構築
+        start_idx = 0
+        while start_idx < n and times[start_idx] < cutoff:
+            start_idx += 1
+
+        if start_idx == 0:
+            pass
+        elif start_idx < n:
+            t_prev = times[start_idx - 1]
+            i_prev = currents[start_idx - 1]
+            t_next = times[start_idx]
+            i_next = currents[start_idx]
+            if t_next > t_prev:
+                ratio = (cutoff - t_prev).total_seconds() / (t_next - t_prev).total_seconds()
+                ratio = max(0.0, min(1.0, ratio))
+                i_interp = i_prev + (i_next - i_prev) * ratio
+                pts.append((cutoff, i_interp))
+        else:
+            # 全てのサンプルが cutoff より前だが最後の値で延長
+            pts.append((cutoff, currents[-1]))
+
+        for idx in range(start_idx, n):
+            if times[idx] >= cutoff:
+                pts.append((times[idx], currents[idx]))
+
+        if not pts:
+            return 0.0
+
+        if pts[0][0] > cutoff:
+            pts.insert(0, (cutoff, pts[0][1]))
+
+        if pts[-1][0] < now:
+            pts.append((now, pts[-1][1]))
+
         energy_wh = 0.0
-        for a in range(len(pts) - 1):
-            t0, i0 = pts[a]
-            t1, i1 = pts[a + 1]
+        for idx in range(len(pts) - 1):
+            t0, i0 = pts[idx]
+            t1, i1 = pts[idx + 1]
             if t1 <= t0:
                 continue
             dt_seconds = (t1 - t0).total_seconds()
             avg_current = 0.5 * (i0 + i1)
             power_w = voltage_v * avg_current
             energy_wh += power_w * (dt_seconds / 3600.0)
+
         return energy_wh
 
-    @staticmethod
-    def _time_weighted_average(times, values):
-        if not times or not values:
-            return None
-        if len(times) == 1:
-            return values[0]
-        total = 0.0
-        duration = 0.0
-        for idx in range(len(times) - 1):
-            t0, t1 = times[idx], times[idx + 1]
-            if t1 <= t0:
-                continue
-            dt_seconds = (t1 - t0).total_seconds()
-            avg_value = 0.5 * (values[idx] + values[idx + 1])
-            total += avg_value * dt_seconds
-            duration += dt_seconds
-        return total / duration if duration > 0 else values[-1]
-
-    def _evaluate_stability(self, system_id):
-        series = self.system_series[system_id]
-        times = series["times_power"]
-        values = series["power_wh"]
-        if len(times) < 2:
-            series["stable_avg"] = None
-            return
-        newest_time = times[-1]
-        cutoff = newest_time - dt.timedelta(seconds=STABLE_MIN_DURATION_SEC)
-        start_idx = 0
-        for i, t in enumerate(times):
-            if t >= cutoff:
-                start_idx = i
-                break
-        window_times = times[start_idx:]
-        window_values = values[start_idx:]
-        if not window_times:
-            series["stable_avg"] = None
-            return
-        if (window_times[-1] - window_times[0]).total_seconds() < STABLE_MIN_DURATION_SEC:
-            series["stable_avg"] = None
-            return
-        vmax = max(window_values)
-        vmin = min(window_values)
-        if vmax - vmin <= STABLE_TOLERANCE_WH:
-            avg = self._time_weighted_average(window_times, window_values)
-            series["stable_avg"] = avg
-        else:
-            series["stable_avg"] = None
-
     # ------------------------------------------------------------------
-    def poll_worker(self):
+    def poll_worker(self) -> None:
         while not self.stop_evt.is_set():
             cycle_start = time.perf_counter()
             now = dt.datetime.now()
 
             pv = {"value": None}
             sv = {"value": None}
-            currents = {}
+            current_resp = {"value": None}
+
             try:
                 with self.io_lock:
                     pv = self.cwf.read_e5cd_pv_decimal(node=E5CD_NODE, sid=SID)
                     sv = self.cwf.read_e5cd_sv_decimal(node=E5CD_NODE, sid=SID)
-                    for system in POWER_SYSTEMS:
-                        try:
-                            cur = self.cwf.read_g3pw_current_amps(node=system["node"], sid=SID)
-                        except Exception as current_exc:
-                            print(f"[ERR] current read {system['id']}: {current_exc}", file=sys.stderr)
-                            cur = {"value": None}
-                        currents[system["id"]] = cur
-            except Exception as exc:
-                print("[ERR] poll I/O:", exc, file=sys.stderr)
+                    current_resp = self.cwf.read_g3pw_current_amps(node=CURRENT_NODE, sid=SID)
+            except Exception as exc:  # pragma: no cover - デバッグログ
+                print("[ERR] ポーリング失敗:", exc, file=sys.stderr)
 
-            self.result_q.put((now, pv, sv, currents))
+            self.result_q.put((now, pv, sv, current_resp))
 
             spent = time.perf_counter() - cycle_start
             sleep_time = max(0.0, POLL_MS / 1000.0 - spent)
@@ -380,91 +337,74 @@ class App(tk.Tk):
                 break
 
     # ------------------------------------------------------------------
-    def drain_results(self):
+    def drain_results(self) -> None:
         try:
             while True:
-                now, pv, sv, currents = self.result_q.get_nowait()
+                now, pv, sv, current_resp = self.result_q.get_nowait()
 
                 if pv.get("value") is not None:
                     try:
-                        value = float(pv["value"])
+                        pv_value = float(pv["value"])
                     except (TypeError, ValueError):
-                        value = None
-                    if value is not None:
+                        pv_value = None
+                    if pv_value is not None:
                         self.temp_times.append(now)
-                        self.temp_values.append(value)
+                        self.temp_values.append(pv_value)
 
                 if sv.get("value") is not None:
                     try:
-                        sv_value_float = float(sv["value"])
-                        sv_text = f"{sv_value_float:.1f} ℃"
+                        sv_value = float(sv["value"])
+                        sv_text = f"{sv_value:.1f} ℃"
                     except (TypeError, ValueError):
                         sv_text = f"{sv['value']}"
-                    self.sv_value = sv_text
                     self.lbl_sv_value.config(text=sv_text)
 
-                for system in POWER_SYSTEMS:
-                    resp = currents.get(system["id"], {})
-                    if resp.get("value") is None:
-                        continue
+                if current_resp.get("value") is not None:
                     try:
-                        current_val = float(resp["value"])
+                        current_val = float(current_resp["value"])
                     except (TypeError, ValueError):
-                        continue
-                    series = self.system_series[system["id"]]
-                    series["times_current"].append(now)
-                    series["currents"].append(current_val)
-                    energy_wh = self._integrate_power_wh(
-                        series["times_current"],
-                        series["currents"],
-                        now,
-                        voltage_v=VOLTAGE_V,
-                        window_sec=60.0,
-                    )
-                    series["times_power"].append(now)
-                    series["power_wh"].append(energy_wh)
-                    self._evaluate_stability(system["id"])
+                        current_val = None
+                    if current_val is not None:
+                        self.current_times.append(now)
+                        self.currents.append(current_val)
+
+                        energy_wh = self._integrate_power_wh(
+                            self.current_times,
+                            self.currents,
+                            now,
+                            voltage_v=VOLTAGE_V,
+                            window_sec=60.0,
+                        )
+
+                        self.power_times.append(now)
+                        self.power_values.append(energy_wh)
+
+                        cutoff = now - dt.timedelta(seconds=120)
+                        while self.current_times and self.current_times[0] < cutoff:
+                            self.current_times.pop(0)
+                            self.currents.pop(0)
 
                 if self.temp_times:
                     self.temp_line.set_data(self.temp_times, self.temp_values)
                     self.ax_temp.set_xlim(self.t0, now)
-                    temp_min = min(self.temp_values)
-                    temp_max = max(self.temp_values)
-                    if temp_min == temp_max:
-                        temp_min -= 1.0
-                        temp_max += 1.0
-                    padding = max(1.0, (temp_max - temp_min) * 0.1)
-                    self.ax_temp.set_ylim(temp_min - padding, temp_max + padding)
+                    t_min = min(self.temp_values)
+                    t_max = max(self.temp_values)
+                    if t_min == t_max:
+                        t_min -= 1.0
+                        t_max += 1.0
+                    padding = max(1.0, (t_max - t_min) * 0.15)
+                    self.ax_temp.set_ylim(t_min - padding, t_max + padding)
 
-                power_values = []
-                for system in POWER_SYSTEMS:
-                    series = self.system_series[system["id"]]
-                    if not series["times_power"]:
-                        series["line"].set_data([], [])
-                        series["stable_line"].set_visible(False)
-                        series["reference_text"].set_text(f"{system['label']} 安定値: ---")
-                        continue
-                    series["line"].set_data(series["times_power"], series["power_wh"])
-                    power_values.extend(series["power_wh"])
-
-                    stable_avg = series["stable_avg"]
-                    if stable_avg is not None:
-                        series["stable_line"].set_ydata([stable_avg, stable_avg])
-                        series["stable_line"].set_visible(True)
-                        series["reference_text"].set_text(f"{system['label']} 安定値: {stable_avg:.3f} Wh")
-                    else:
-                        series["stable_line"].set_visible(False)
-                        series["reference_text"].set_text(f"{system['label']} 安定値: ---")
-
-                if power_values:
+                if self.power_times:
+                    self.power_line.set_data(self.power_times, self.power_values)
                     self.ax_power.set_xlim(self.t0, now)
-                    p_min = min(power_values)
-                    p_max = max(power_values)
+                    p_min = min(self.power_values)
+                    p_max = max(self.power_values)
                     if p_min == p_max:
-                        pad = max(0.05, p_max * 0.1 if p_max != 0 else 0.1)
+                        pad = max(0.05, p_max * 0.1 if p_max else 0.1)
                         p_min -= pad
                         p_max += pad
-                    padding = max(0.05, (p_max - p_min) * 0.1)
+                    padding = max(0.05, (p_max - p_min) * 0.15)
                     self.ax_power.set_ylim(p_min - padding, p_max + padding)
 
                 self.canvas.draw_idle()
@@ -475,7 +415,7 @@ class App(tk.Tk):
             self.after(120, self.drain_results)
 
     # ------------------------------------------------------------------
-    def on_close(self):
+    def on_close(self) -> None:
         try:
             self.stop_evt.set()
             if hasattr(self, "worker") and self.worker.is_alive():
@@ -483,7 +423,7 @@ class App(tk.Tk):
             if hasattr(self, "cwf") and self.cwf:
                 try:
                     self.cwf.close()
-                except Exception:
+                except Exception:  # pragma: no cover - 終了処理
                     pass
         finally:
             self.destroy()
