@@ -96,9 +96,9 @@ class App(tk.Tk):
 
         left_frame = tk.Frame(self, bg=BG_COLOR)
         left_frame.grid(row=0, column=0, sticky="nsew", padx=(24, 12), pady=24)
-        left_frame.columnconfigure(0, weight=5)
-        left_frame.columnconfigure(1, weight=2)
-        left_frame.rowconfigure(0, weight=1)
+        left_frame.columnconfigure(0, weight=1)
+        left_frame.rowconfigure(0, weight=0)
+        left_frame.rowconfigure(1, weight=1)
 
         right_frame = tk.Frame(self, bg=BG_COLOR)
         right_frame.grid(row=0, column=1, sticky="nsew", padx=(12, 24), pady=24)
@@ -107,8 +107,8 @@ class App(tk.Tk):
         right_frame.rowconfigure(1, weight=4)
         right_frame.rowconfigure(2, weight=2)
 
-        self._build_graph_area(left_frame)
         self._build_setpoint_panel(left_frame)
+        self._build_graph_area(left_frame)
         self._build_showcase(right_frame)
 
         self.result_q = queue.Queue()
@@ -122,10 +122,10 @@ class App(tk.Tk):
     def _build_graph_area(self, parent: tk.Frame) -> None:
         fig = Figure(figsize=(12, 7), dpi=100)
         fig.patch.set_facecolor(BG_COLOR)
-        gs = fig.add_gridspec(2, 1, hspace=0.32)
+        gs = fig.add_gridspec(2, 1, hspace=0.48)
         self.ax_temp = fig.add_subplot(gs[0])
         self.ax_power = fig.add_subplot(gs[1], sharex=self.ax_temp)
-        fig.subplots_adjust(left=0.08, right=0.97, top=0.94, bottom=0.09)
+        fig.subplots_adjust(left=0.08, right=0.97, top=0.94, bottom=0.16)
 
         for ax in (self.ax_temp, self.ax_power):
             ax.set_facecolor(PANEL_COLOR)
@@ -135,39 +135,50 @@ class App(tk.Tk):
                 spine.set_color("#1e293b")
             ax.grid(True, color=GRID_COLOR, alpha=0.55, linewidth=1.2)
 
-        self.ax_temp.set_title("温度の推移", color=TEXT_PRIMARY, fontweight="bold", pad=16)
         self.ax_temp.set_ylabel("温度 (℃)", color=TEXT_PRIMARY, labelpad=18)
         self.ax_temp.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
         self.ax_temp.tick_params(axis="x", which="both", labelbottom=False)
 
-        self.ax_power.set_title("直近1分相当の消費電力量", color=TEXT_PRIMARY, fontweight="bold", pad=18)
         self.ax_power.set_ylabel("電力量 (Wh)", color=TEXT_PRIMARY, labelpad=20)
-        self.ax_power.set_xlabel("時刻", color=TEXT_PRIMARY, labelpad=22)
         self.ax_power.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
 
         (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=4.0)
         (self.power_line,) = self.ax_power.plot([], [], color=POWER_COLOR, linewidth=4.2, label="消費電力量")
 
-        legend = self.ax_power.legend(
-            loc="upper left",
-            facecolor="#132041",
-            edgecolor="#1e293b",
-            framealpha=0.9,
-            fontsize=16,
+        self.ax_temp.text(
+            0.5,
+            -0.22,
+            "温度の推移",
+            transform=self.ax_temp.transAxes,
+            color=TEXT_PRIMARY,
+            fontweight="bold",
+            fontsize=24,
+            ha="center",
+            va="top",
         )
-        for text in legend.get_texts():
-            text.set_color(TEXT_PRIMARY)
+
+        self.ax_power.text(
+            0.5,
+            -0.26,
+            "直近1分相当の消費電力量",
+            transform=self.ax_power.transAxes,
+            color=TEXT_PRIMARY,
+            fontweight="bold",
+            fontsize=24,
+            ha="center",
+            va="top",
+        )
 
         canvas = FigureCanvasTkAgg(fig, master=parent)
         self.canvas_widget = canvas.get_tk_widget()
         self.canvas_widget.configure(bg=BG_COLOR, highlightthickness=0)
-        self.canvas_widget.grid(row=0, column=0, sticky="nsew")
+        self.canvas_widget.grid(row=1, column=0, sticky="nsew")
         self.canvas = canvas
         self.canvas.draw_idle()
 
     def _build_setpoint_panel(self, parent: tk.Frame) -> None:
         panel = tk.Frame(parent, bg=PANEL_COLOR, bd=0, relief="flat", padx=24, pady=24)
-        panel.grid(row=0, column=1, sticky="n", padx=(24, 0))
+        panel.grid(row=0, column=0, sticky="nw", pady=(0, 18))
         panel.columnconfigure(0, weight=1)
 
         title = tk.Label(
