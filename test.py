@@ -20,11 +20,11 @@ from matplotlib.dates import DateFormatter
 
 try:
     from PIL import Image, ImageTk
-except Exception:  # pragma: no cover - Pillow がない場合のフォールバック
+except Exception:  # Pillow がない場合のフォールバック
     Image = None
     ImageTk = None
 
-import japanize_matplotlib  # noqa: F401  # フォントを日本語対応させる
+import japanize_matplotlib  # noqa: F401
 
 from compowayf_driver import CompoWayFDriver
 
@@ -34,7 +34,7 @@ PORT = "/dev/ttyUSB0"
 E5CD_NODE = "01"
 CURRENT_NODE = "02"
 SID = "0"
-POLL_MS = 0  # 応答を受け次第次コマンドを送信
+POLL_MS = 0
 VOLTAGE_V = 200.0  # 指定通り電圧は固定
 
 
@@ -49,7 +49,7 @@ TEMP_COLOR = "#ef4444"
 POWER_COLOR = "#2563eb"
 
 
-# ---- 画像プレースホルダ設定 ----
+# ---- 画像パス ----
 script_dir = os.path.dirname(os.path.abspath(__file__))
 DEVICE1_IMAGE_PATH = os.path.join(script_dir, "product_1.png")
 DEVICE2_IMAGE_PATH = os.path.join(script_dir, "product_2.png")
@@ -81,20 +81,22 @@ class App(tk.Tk):
             pass
 
         self.t0 = dt.datetime.now()
-        self.temp_times = []
-        self.temp_values = []
-        self.current_times = []
-        self.currents = []
-        self.power_times = []
-        self.power_values = []
+        self.temp_times: List[dt.datetime] = []
+        self.temp_values: List[float] = []
+        self.current_times: List[dt.datetime] = []
+        self.currents: List[float] = []
+        self.power_times: List[dt.datetime] = []
+        self.power_values: List[float] = []
 
+        # センサー未接続でも GUI は起動させる
         try:
             self.cwf = CompoWayFDriver(port=PORT)
-        except Exception:  # pragma: no cover - センサー未接続時のフォールバック
+        except Exception:
             self.cwf = None
 
         self.io_lock = threading.Lock()
 
+        # レイアウト：左(80%) / 右(20%)
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=0)
         self.rowconfigure(0, weight=1)
@@ -102,18 +104,23 @@ class App(tk.Tk):
         self._right_ratio = 0.20
         self.bind("<Configure>", self._on_root_resize)
 
+        # 右ペインの縦配分（上から: 設定温度 / デバイス1 / デバイス2 / 余白(0)）
         self._section_ratios = (0.17, 0.38, 0.35, 0.1)
+
+        # 画像ハンドリング
         self._img_sources: Dict[int, Optional["Image.Image"]] = {}
         self._img_labels: Dict[int, tk.Label] = {}
         self._caption_labels: Dict[int, Optional[tk.Label]] = {}
         self._img_tk_cache: Dict[int, object] = {}
         self._pil_available = Image is not None and ImageTk is not None
 
+        # 左（グラフ）
         left_frame = tk.Frame(self, bg=BG_COLOR)
         left_frame.grid(row=0, column=0, sticky="nsew", padx=(16, 6), pady=16)
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(0, weight=1)
 
+        # 右（設定温度 + デバイス画像2つ）※ロゴはここに置かない
         right_frame = tk.Frame(self, bg=BG_COLOR)
         right_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 16), pady=16)
         right_frame.columnconfigure(0, weight=1)
@@ -125,8 +132,14 @@ class App(tk.Tk):
 
         self._build_graph_area(left_frame)
         self._build_setpoint_panel(right_frame)
-        self._build_showcase(right_frame)
+        self._build_showcase(right_frame)  # デバイス1/2のみ
 
+        # === 企業ロゴはウィンドウ直下に直接配置 ===
+        self.logo_image_pil: Optional["Image.Image"] = self._load_image_pil(LOGO_IMAGE_PATH)
+        self.logo_label = tk.Label(self, bg=BG_COLOR, bd=0, highlightthickness=0)
+        self._logo_tk_ref: Optional[object] = None  # GC防止用参照
+
+        # ポーリングスレッド（無ければ起動しない）
         self.result_q = queue.Queue()
         self.stop_evt = threading.Event()
         if self.cwf is not None:
@@ -137,16 +150,20 @@ class App(tk.Tk):
 
         self.after(100, self.drain_results)
 
-        # ==== フルスクリーン起動 & ESCで解除 ====
-        self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))  # ESC で解除
-        self.bind("<F11>", self.toggle_fullscreen)  # ← トグル機能も登録
+        # フルスクリーン起動 + 解除/トグル
+        self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))
+        self.bind("<F11>", self.toggle_fullscreen)
+
+        # 初期ロゴ配置
+        self.after(0, self._update_logo_position)
 
     # ------------------------------------------------------------------
     def toggle_fullscreen(self, event=None):
-        """F11キーなどでフルスクリーン ⇄ 通常表示を切り替える"""
+        """F11キーでフルスクリーン ⇄ 通常表示を切り替え"""
         is_full = self.attributes("-fullscreen")
         self.attributes("-fullscreen", not is_full)
 
+    # ------------------------------------------------------------------
     def _build_graph_area(self, parent: tk.Frame) -> None:
         fig = Figure(figsize=(12.4, 8.2), dpi=100)
         fig.patch.set_facecolor(BG_COLOR)
@@ -173,20 +190,8 @@ class App(tk.Tk):
         (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=4.0)
         (self.power_line,) = self.ax_power.plot([], [], color=POWER_COLOR, linewidth=4.2, label="消費電力量")
 
-        self.ax_temp.set_title(
-            "温度の推移",
-            color=TEXT_PRIMARY,
-            fontweight="bold",
-            fontsize=30,
-            pad=16,
-        )
-        self.ax_power.set_title(
-            "直近1分の消費電力量",
-            color=TEXT_PRIMARY,
-            fontweight="bold",
-            fontsize=30,
-            pad=16,
-        )
+        self.ax_temp.set_title("温度の推移", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16)
+        self.ax_power.set_title("直近1分の消費電力量", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16)
 
         canvas = FigureCanvasTkAgg(fig, master=parent)
         self.canvas_widget = canvas.get_tk_widget()
@@ -195,18 +200,13 @@ class App(tk.Tk):
         self.canvas = canvas
         self.canvas.draw_idle()
 
+    # ------------------------------------------------------------------
     def _build_setpoint_panel(self, parent: tk.Frame) -> None:
         panel = tk.Frame(parent, bg=PANEL_COLOR, bd=0, relief="flat", padx=20, pady=10)
         panel.grid(row=0, column=0, sticky="new", pady=(0, 18))
         panel.columnconfigure(0, weight=1)
 
-        title = tk.Label(
-            panel,
-            text="設定温度",
-            font=("Yu Gothic UI", 24, "bold"),
-            fg=TEXT_PRIMARY,
-            bg=PANEL_COLOR,
-        )
+        title = tk.Label(panel, text="設定温度", font=("Yu Gothic UI", 24, "bold"), fg=TEXT_PRIMARY, bg=PANEL_COLOR)
         title.grid(row=0, column=0, sticky="w")
 
         self.lbl_sv_value = tk.Label(
@@ -218,11 +218,12 @@ class App(tk.Tk):
         )
         self.lbl_sv_value.grid(row=1, column=0, sticky="w", pady=(0, 0))
 
+    # ------------------------------------------------------------------
     def _build_showcase(self, parent: tk.Frame) -> None:
+        # ★ ロゴは除外（右端に直接配置するため）
         sections = [
             ("デバイス1", DEVICE1_IMAGE_PATH, "熱風循環式エアヒーター\nLHS 410 SF-R"),
             ("デバイス2", DEVICE2_IMAGE_PATH, "熱風循環式高圧送風機\nチヌーク"),
-            ("ロゴ", LOGO_IMAGE_PATH, None),
         ]
 
         for idx, (_, path, caption) in enumerate(sections):
@@ -237,25 +238,22 @@ class App(tk.Tk):
             label.grid(row=0, column=0, sticky="nsew")
             self._img_labels[idx] = label
 
-            if caption:
-                caption_label = tk.Label(
-                    frame,
-                    text=caption,
-                    font=("Yu Gothic UI", 18, "bold" if idx < 2 else "normal"),
-                    fg=TEXT_PRIMARY,
-                    bg=PANEL_COLOR,
-                    justify="center",
-                )
-                caption_label.grid(row=1, column=0, sticky="ew", pady=(12, 0))
-            else:
-                caption_label = None
-
+            caption_label = tk.Label(
+                frame,
+                text=caption,
+                font=("Yu Gothic UI", 18, "bold"),
+                fg=TEXT_PRIMARY,
+                bg=PANEL_COLOR,
+                justify="center",
+            )
+            caption_label.grid(row=1, column=0, sticky="ew", pady=(12, 0))
             self._caption_labels[idx] = caption_label
 
             frame.bind("<Configure>", lambda event, section_idx=idx: self._update_section_image(section_idx))
 
         self.after(0, self._refresh_showcase_images)
 
+    # ------------------------------------------------------------------
     def _load_image_pil(self, path: Optional[str]) -> Optional["Image.Image"]:
         if not path or not self._pil_available:
             return None
@@ -268,7 +266,7 @@ class App(tk.Tk):
         max_w = max(1, max_w)
         max_h = max(1, max_h)
         w, h = pil_img.size
-        scale = min(max_w / w, max_h / h)
+        scale = min(max_w / w, max_h / h)  # contain
         new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
         resized = pil_img.resize(new_size, Image.LANCZOS)
         return ImageTk.PhotoImage(resized)
@@ -316,13 +314,50 @@ class App(tk.Tk):
         for idx in list(self._img_labels.keys()):
             self._update_section_image(idx)
 
+    # === ロゴ（右端に直接配置） ==========================================
+    def _update_logo_position(self, event: Optional[tk.Event] = None) -> None:
+        """ウィンドウ右端にロゴを直貼り（横幅=ウィンドウの20%）。高さは比率で決定。"""
+        total_w = max(1, self.winfo_width())
+        total_h = max(1, self.winfo_height())
+
+        logo_w = int(total_w * 0.20)  # 指定：横幅は20%
+        if logo_w <= 0:
+            return
+
+        if self.logo_image_pil is not None and self._pil_available:
+            # アスペクト維持で幅優先（contain: 幅はピッタリ、余った高さは余白）
+            w, h = self.logo_image_pil.size
+            scale = logo_w / max(1, w)
+            new_w = max(1, int(w * scale))
+            new_h = max(1, int(h * scale))
+            resized = self.logo_image_pil.resize((new_w, new_h), Image.LANCZOS)
+            tk_img = ImageTk.PhotoImage(resized)
+            self._logo_tk_ref = tk_img
+            self.logo_label.configure(image=tk_img)
+            logo_h = new_h
+        else:
+            # Pillow 不在時はプレースホルダを幅20%・任意高さで生成（高さは右ペイン高さに近似）
+            logo_h = int(total_h * 0.12)
+            ph = self._create_placeholder_image(max(1, logo_w), max(1, logo_h))
+            self._logo_tk_ref = ph
+            self.logo_label.configure(image=ph)
+
+        # 右下に配置（下端そろえ）。必要に応じて y 位置は調整可能。
+        x = total_w - logo_w
+        y = total_h - logo_h
+        self.logo_label.place(x=x, y=y, width=logo_w, height=logo_h)
+
+    # ------------------------------------------------------------------
     def _on_root_resize(self, event: tk.Event) -> None:
         if event.widget is not self:
             return
+        # 右列を厳密に20%幅に
         total_w = max(1, self.winfo_width())
         target_right = int(total_w * self._right_ratio)
         self.grid_columnconfigure(1, weight=0, minsize=target_right)
         self.grid_columnconfigure(0, weight=1)
+        # ロゴ位置/サイズも更新
+        self._update_logo_position()
 
     def _on_right_frame_resize(self, event: tk.Event) -> None:
         if event.widget is not self.right_frame:
@@ -345,14 +380,12 @@ class App(tk.Tk):
             return 0.0
 
         cutoff = now - dt.timedelta(seconds=window_sec)
-
         if times[-1] < cutoff:
             return 0.0
 
         pts = []
         n = len(times)
 
-        # 直近 window 内のデータ列を構築
         start_idx = 0
         while start_idx < n and times[start_idx] < cutoff:
             start_idx += 1
@@ -370,7 +403,6 @@ class App(tk.Tk):
                 i_interp = i_prev + (i_next - i_prev) * ratio
                 pts.append((cutoff, i_interp))
         else:
-            # 全てのサンプルが cutoff より前だが最後の値で延長
             pts.append((cutoff, currents[-1]))
 
         for idx in range(start_idx, n):
@@ -382,7 +414,6 @@ class App(tk.Tk):
 
         if pts[0][0] > cutoff:
             pts.insert(0, (cutoff, pts[0][1]))
-
         if pts[-1][0] < now:
             pts.append((now, pts[-1][1]))
 
@@ -414,7 +445,7 @@ class App(tk.Tk):
                     pv = self.cwf.read_e5cd_pv_decimal(node=E5CD_NODE, sid=SID)
                     sv = self.cwf.read_e5cd_sv_decimal(node=E5CD_NODE, sid=SID)
                     current_resp = self.cwf.read_g3pw_current_amps(node=CURRENT_NODE, sid=SID)
-            except Exception as exc:  # pragma: no cover - デバッグログ
+            except Exception as exc:  # デバッグログ
                 print("[ERR] ポーリング失敗:", exc, file=sys.stderr)
 
             self.result_q.put((now, pv, sv, current_resp))
@@ -511,7 +542,7 @@ class App(tk.Tk):
             if hasattr(self, "cwf") and self.cwf:
                 try:
                     self.cwf.close()
-                except Exception:  # pragma: no cover - 終了処理
+                except Exception:
                     pass
         finally:
             self.destroy()
