@@ -177,14 +177,14 @@ class App(tk.Tk):
             "温度の推移",
             color=TEXT_PRIMARY,
             fontweight="bold",
-            fontsize=24,
+            fontsize=30,
             pad=16,
         )
         self.ax_power.set_title(
-            "直近1分相当の消費電力量",
+            "直近1分の消費電力量",
             color=TEXT_PRIMARY,
             fontweight="bold",
-            fontsize=24,
+            fontsize=30,
             pad=16,
         )
 
