@@ -199,7 +199,7 @@ class App(tk.Tk):
         self.bind("<KeyRelease-k>", self._on_power_unit_key_release)
 
         self.ax_temp.set_title("温度の推移", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16)
-        self.ax_power.set_title("1分間の平均消費電力", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16,)
+        self.ax_power.set_title("直近1分間の平均消費電力", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16,)
 
         canvas = FigureCanvasTkAgg(fig, master=parent)
         self.canvas_widget = canvas.get_tk_widget()
