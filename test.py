@@ -94,17 +94,17 @@ class App(tk.Tk):
 
         self.io_lock = threading.Lock()
 
-        self.columnconfigure(0, weight=4)
+        self.columnconfigure(0, weight=5)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
         left_frame = tk.Frame(self, bg=BG_COLOR)
-        left_frame.grid(row=0, column=0, sticky="nsew", padx=(24, 12), pady=24)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(24, 8), pady=24)
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(0, weight=1)
 
         right_frame = tk.Frame(self, bg=BG_COLOR)
-        right_frame.grid(row=0, column=1, sticky="nsew", padx=(12, 24), pady=24)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(8, 24), pady=24)
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=0)
         right_frame.rowconfigure(1, weight=4)
@@ -124,12 +124,12 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------
     def _build_graph_area(self, parent: tk.Frame) -> None:
-        fig = Figure(figsize=(12, 7), dpi=100)
+        fig = Figure(figsize=(12.4, 7), dpi=100)
         fig.patch.set_facecolor(BG_COLOR)
         gs = fig.add_gridspec(2, 1, hspace=0.48)
         self.ax_temp = fig.add_subplot(gs[0])
         self.ax_power = fig.add_subplot(gs[1], sharex=self.ax_temp)
-        fig.subplots_adjust(left=0.08, right=0.97, top=0.94, bottom=0.16)
+        fig.subplots_adjust(left=0.07, right=0.985, top=0.94, bottom=0.16)
 
         for ax in (self.ax_temp, self.ax_power):
             ax.set_facecolor(PANEL_COLOR)
@@ -181,7 +181,7 @@ class App(tk.Tk):
         self.canvas.draw_idle()
 
     def _build_setpoint_panel(self, parent: tk.Frame) -> None:
-        panel = tk.Frame(parent, bg=PANEL_COLOR, bd=0, relief="flat", padx=24, pady=24)
+        panel = tk.Frame(parent, bg=PANEL_COLOR, bd=0, relief="flat", padx=20, pady=24)
         panel.grid(row=0, column=0, sticky="new", pady=(0, 18))
         panel.columnconfigure(0, weight=1)
 
@@ -203,15 +203,6 @@ class App(tk.Tk):
         )
         self.lbl_sv_value.grid(row=1, column=0, sticky="w", pady=(18, 6))
 
-        caption = tk.Label(
-            panel,
-            text="制御装置から取得した最新値",
-            font=("Yu Gothic UI", 18),
-            fg=TEXT_SECONDARY,
-            bg=PANEL_COLOR,
-        )
-        caption.grid(row=2, column=0, sticky="w")
-
     def _build_showcase(self, parent: tk.Frame) -> None:
         sections = [
             ("デバイス1", DEVICE1_IMAGE_PATH, "熱風循環式エアヒーター\nLHS 410 SF-R"),
@@ -220,12 +211,19 @@ class App(tk.Tk):
         ]
 
         for idx, (_, path, caption) in enumerate(sections):
-            frame = tk.Frame(parent, bg=PANEL_COLOR, padx=16, pady=16)
+            frame = tk.Frame(parent, bg=PANEL_COLOR, padx=12, pady=16)
             frame.grid(row=idx + 1, column=0, sticky="nsew", pady=(0 if idx == 0 else 18, 0))
             frame.columnconfigure(0, weight=1)
             frame.rowconfigure(0, weight=1)
 
-            image = self._load_image(path, width=360, height=240 if idx < 2 else 160)
+            if idx == 0:
+                img_width, img_height = 340, 260
+            elif idx == 1:
+                img_width, img_height = 320, 220
+            else:
+                img_width, img_height = 280, 140
+
+            image = self._load_image(path, width=img_width, height=img_height)
             label = tk.Label(frame, image=image, bg=PANEL_COLOR)
             label.image = image
             label.grid(row=0, column=0, sticky="nsew")
