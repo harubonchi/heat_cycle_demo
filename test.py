@@ -19,11 +19,7 @@ from matplotlib.figure import Figure
 from matplotlib.dates import DateFormatter
 from matplotlib.ticker import FuncFormatter
 
-try:
-    from PIL import Image, ImageTk
-except Exception:  # Pillow がない場合のフォールバック
-    Image = None
-    ImageTk = None
+from PIL import Image, ImageTk
 
 import japanize_matplotlib  # noqa: F401
 
