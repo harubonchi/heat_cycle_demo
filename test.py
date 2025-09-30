@@ -102,7 +102,7 @@ class App(tk.Tk):
         self._right_ratio = 0.20
         self.bind("<Configure>", self._on_root_resize)
 
-        self._section_ratios = (0.2, 0.35, 0.35, 0.1)
+        self._section_ratios = (0.17, 0.38, 0.35, 0.1)
         self._img_sources: Dict[int, Optional["Image.Image"]] = {}
         self._img_labels: Dict[int, tk.Label] = {}
         self._caption_labels: Dict[int, Optional[tk.Label]] = {}
@@ -158,7 +158,7 @@ class App(tk.Tk):
         self.ax_temp.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
         self.ax_temp.tick_params(axis="x", which="both", labelbottom=False)
 
-        self.ax_power.set_ylabel("電力量 (Wh)", color=TEXT_PRIMARY, labelpad=20)
+        self.ax_power.set_ylabel("電力消費量 (Wh)", color=TEXT_PRIMARY, labelpad=20)
         self.ax_power.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
 
         (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=4.0)
@@ -187,7 +187,7 @@ class App(tk.Tk):
         self.canvas.draw_idle()
 
     def _build_setpoint_panel(self, parent: tk.Frame) -> None:
-        panel = tk.Frame(parent, bg=PANEL_COLOR, bd=0, relief="flat", padx=20, pady=24)
+        panel = tk.Frame(parent, bg=PANEL_COLOR, bd=0, relief="flat", padx=20, pady=10)
         panel.grid(row=0, column=0, sticky="new", pady=(0, 18))
         panel.columnconfigure(0, weight=1)
 
@@ -207,7 +207,7 @@ class App(tk.Tk):
             fg=ACCENT_COLOR,
             bg=PANEL_COLOR,
         )
-        self.lbl_sv_value.grid(row=1, column=0, sticky="w", pady=(18, 6))
+        self.lbl_sv_value.grid(row=1, column=0, sticky="w", pady=(0, 0))
 
     def _build_showcase(self, parent: tk.Frame) -> None:
         sections = [
