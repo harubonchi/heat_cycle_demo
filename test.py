@@ -7,21 +7,22 @@ import sys
 import os
 import time
 import datetime as dt
-import math
 import threading
 import queue
 import tkinter as tk
-from tkinter import messagebox
 import tkinter.font as tkfont
-from fractions import Fraction
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.dates import DateFormatter
 
-from PIL import Image, ImageTk
+try:
+    from PIL import Image, ImageTk
+except Exception:  # pragma: no cover - Pillow がない場合のフォールバック
+    Image = None
+    ImageTk = None
 
 import japanize_matplotlib  # noqa: F401  # フォントを日本語対応させる
 
@@ -89,16 +90,24 @@ class App(tk.Tk):
 
         try:
             self.cwf = CompoWayFDriver(port=PORT)
-        except Exception as exc:  # pragma: no cover - GUI メッセージ用
-            messagebox.showerror("シリアル接続エラー", str(exc))
-            self.destroy()
-            sys.exit(1)
+        except Exception:  # pragma: no cover - センサー未接続時のフォールバック
+            self.cwf = None
 
         self.io_lock = threading.Lock()
 
-        self.columnconfigure(0, weight=5)
-        self.columnconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=0)
         self.rowconfigure(0, weight=1)
+
+        self._right_ratio = 0.20
+        self.bind("<Configure>", self._on_root_resize)
+
+        self._section_ratios = (0.2, 0.35, 0.35, 0.1)
+        self._img_sources: Dict[int, Optional["Image.Image"]] = {}
+        self._img_labels: Dict[int, tk.Label] = {}
+        self._caption_labels: Dict[int, Optional[tk.Label]] = {}
+        self._img_tk_cache: Dict[int, object] = {}
+        self._pil_available = Image is not None and ImageTk is not None
 
         left_frame = tk.Frame(self, bg=BG_COLOR)
         left_frame.grid(row=0, column=0, sticky="nsew", padx=(16, 6), pady=16)
@@ -108,10 +117,11 @@ class App(tk.Tk):
         right_frame = tk.Frame(self, bg=BG_COLOR)
         right_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 16), pady=16)
         right_frame.columnconfigure(0, weight=1)
-        right_frame.rowconfigure(0, weight=0)
-        right_frame.rowconfigure(1, weight=4)
-        right_frame.rowconfigure(2, weight=4)
-        right_frame.rowconfigure(3, weight=2)
+        for row in range(4):
+            right_frame.rowconfigure(row, weight=1)
+        right_frame.grid_propagate(False)
+        right_frame.bind("<Configure>", self._on_right_frame_resize)
+        self.right_frame = right_frame
 
         self._build_graph_area(left_frame)
         self._build_setpoint_panel(right_frame)
@@ -119,8 +129,11 @@ class App(tk.Tk):
 
         self.result_q = queue.Queue()
         self.stop_evt = threading.Event()
-        self.worker = threading.Thread(target=self.poll_worker, daemon=True)
-        self.worker.start()
+        if self.cwf is not None:
+            self.worker = threading.Thread(target=self.poll_worker, daemon=True)
+            self.worker.start()
+        else:
+            self.worker = None
 
         self.after(100, self.drain_results)
 
@@ -131,7 +144,7 @@ class App(tk.Tk):
         gs = fig.add_gridspec(2, 1, hspace=0.32)
         self.ax_temp = fig.add_subplot(gs[0])
         self.ax_power = fig.add_subplot(gs[1], sharex=self.ax_temp)
-        fig.subplots_adjust(left=0.1, right=0.95, top=0.95, bottom=0.05)
+        fig.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.08)
 
         for ax in (self.ax_temp, self.ax_power):
             ax.set_facecolor(PANEL_COLOR)
@@ -209,17 +222,11 @@ class App(tk.Tk):
             frame.columnconfigure(0, weight=1)
             frame.rowconfigure(0, weight=1)
 
-            if idx == 0:
-                img_width, img_height = 372, 284
-            elif idx == 1:
-                img_width, img_height = 352, 242
-            else:
-                img_width, img_height = 312, 160
+            self._img_sources[idx] = self._load_image_pil(path)
 
-            image = self._load_image(path, width=img_width, height=img_height)
-            label = tk.Label(frame, image=image, bg=PANEL_COLOR)
-            label.image = image
+            label = tk.Label(frame, bg=PANEL_COLOR)
             label.grid(row=0, column=0, sticky="nsew")
+            self._img_labels[idx] = label
 
             if caption:
                 caption_label = tk.Label(
@@ -231,44 +238,35 @@ class App(tk.Tk):
                     justify="center",
                 )
                 caption_label.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+            else:
+                caption_label = None
 
-    def _load_image(self, path: Optional[str], width: int, height: int) -> tk.PhotoImage:
-        if path:
-            try:
-                image = tk.PhotoImage(file=path)
-                img_width = image.width() or 1
-                img_height = image.height() or 1
+            self._caption_labels[idx] = caption_label
 
-                needs_resize = img_width > width or img_height > height
-                if needs_resize:
-                    scale = min(width / img_width, height / img_height)
-                    scale = max(scale, 0.0)
-                    if scale < 1.0:
-                        frac = Fraction(scale).limit_denominator(100)
-                        numerator = max(1, frac.numerator)
-                        denominator = max(1, frac.denominator)
+            frame.bind("<Configure>", lambda event, section_idx=idx: self._update_section_image(section_idx))
 
-                        if numerator < denominator:
-                            image = image.zoom(numerator)
-                            image = image.subsample(denominator)
-                        else:
-                            shrink_factor = max(2, math.ceil(img_width / width), math.ceil(img_height / height))
-                            image = image.subsample(shrink_factor)
+        self.after(0, self._refresh_showcase_images)
 
-                        final_width = image.width() or 1
-                        final_height = image.height() or 1
-                        adjust_factor = max(
-                            1,
-                            math.ceil(final_width / width),
-                            math.ceil(final_height / height),
-                        )
-                        if adjust_factor > 1:
-                            image = image.subsample(adjust_factor)
+    def _load_image_pil(self, path: Optional[str]) -> Optional["Image.Image"]:
+        if not path or not self._pil_available:
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception:
+            return None
 
-                return image
-            except tk.TclError:
-                pass
+    def _resize_image_keep_aspect(self, pil_img: "Image.Image", max_w: int, max_h: int) -> "ImageTk.PhotoImage":
+        max_w = max(1, max_w)
+        max_h = max(1, max_h)
+        w, h = pil_img.size
+        scale = min(max_w / w, max_h / h)
+        new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+        resized = pil_img.resize(new_size, Image.LANCZOS)
+        return ImageTk.PhotoImage(resized)
 
+    def _create_placeholder_image(self, width: int, height: int) -> tk.PhotoImage:
+        width = max(1, width)
+        height = max(1, height)
         image = tk.PhotoImage(width=width, height=height)
         for x in range(width):
             blend = x / max(1, width - 1)
@@ -278,8 +276,52 @@ class App(tk.Tk):
             color = f"#{r:02x}{g:02x}{b:02x}"
             image.put(color, to=(x, 0, x + 1, height))
         overlay_color = "#1f2937"
-        image.put(overlay_color, to=(0, height - 48, width, height))
+        overlay_height = max(1, int(height * 0.2))
+        image.put(overlay_color, to=(0, height - overlay_height, width, height))
         return image
+
+    def _update_section_image(self, idx: int) -> None:
+        label = self._img_labels.get(idx)
+        if not label or not label.winfo_exists():
+            return
+
+        frame = label.master
+        frame_width = max(1, frame.winfo_width() - 24)
+        frame_height = max(1, frame.winfo_height() - 32)
+
+        caption = self._caption_labels.get(idx)
+        if caption and caption.winfo_ismapped():
+            caption_height = max(caption.winfo_height(), caption.winfo_reqheight())
+            frame_height = max(1, frame_height - caption_height - 12)
+
+        pil_src = self._img_sources.get(idx)
+        if pil_src is not None and self._pil_available:
+            tk_img = self._resize_image_keep_aspect(pil_src, frame_width, frame_height)
+        else:
+            tk_img = self._create_placeholder_image(frame_width, frame_height)
+
+        self._img_tk_cache[idx] = tk_img
+        label.configure(image=tk_img)
+
+    def _refresh_showcase_images(self) -> None:
+        for idx in list(self._img_labels.keys()):
+            self._update_section_image(idx)
+
+    def _on_root_resize(self, event: tk.Event) -> None:
+        if event.widget is not self:
+            return
+        total_w = max(1, self.winfo_width())
+        target_right = int(total_w * self._right_ratio)
+        self.grid_columnconfigure(1, weight=0, minsize=target_right)
+        self.grid_columnconfigure(0, weight=1)
+
+    def _on_right_frame_resize(self, event: tk.Event) -> None:
+        if event.widget is not self.right_frame:
+            return
+        total_h = max(1, self.right_frame.winfo_height())
+        for row, ratio in enumerate(self._section_ratios):
+            minsize = int(total_h * ratio)
+            self.right_frame.grid_rowconfigure(row, minsize=minsize, weight=1)
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -455,7 +497,7 @@ class App(tk.Tk):
     def on_close(self) -> None:
         try:
             self.stop_evt.set()
-            if hasattr(self, "worker") and self.worker.is_alive():
+            if hasattr(self, "worker") and self.worker is not None and self.worker.is_alive():
                 self.worker.join(timeout=1.5)
             if hasattr(self, "cwf") and self.cwf:
                 try:
