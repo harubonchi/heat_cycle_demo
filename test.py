@@ -4,6 +4,7 @@
 """リアルタイム温度・電力モニター GUI"""
 
 import sys
+import os
 import time
 import datetime as dt
 import threading
@@ -44,9 +45,10 @@ POWER_COLOR = "#2563eb"
 
 
 # ---- 画像プレースホルダ設定 ----
-DEVICE1_IMAGE_PATH = None
-DEVICE2_IMAGE_PATH = None
-LOGO_IMAGE_PATH = None
+script_dir = os.path.dirname(os.path.abspath(__file__))
+DEVICE1_IMAGE_PATH = os.path.join(script_dir, "product_1.png")
+DEVICE2_IMAGE_PATH = os.path.join(script_dir, "product_2.png")
+LOGO_IMAGE_PATH = os.path.join(script_dir, "Leister_Logo.png")
 
 
 class App(tk.Tk):
@@ -97,18 +99,18 @@ class App(tk.Tk):
         left_frame = tk.Frame(self, bg=BG_COLOR)
         left_frame.grid(row=0, column=0, sticky="nsew", padx=(24, 12), pady=24)
         left_frame.columnconfigure(0, weight=1)
-        left_frame.rowconfigure(0, weight=0)
-        left_frame.rowconfigure(1, weight=1)
+        left_frame.rowconfigure(0, weight=1)
 
         right_frame = tk.Frame(self, bg=BG_COLOR)
         right_frame.grid(row=0, column=1, sticky="nsew", padx=(12, 24), pady=24)
         right_frame.columnconfigure(0, weight=1)
-        right_frame.rowconfigure(0, weight=4)
+        right_frame.rowconfigure(0, weight=0)
         right_frame.rowconfigure(1, weight=4)
-        right_frame.rowconfigure(2, weight=2)
+        right_frame.rowconfigure(2, weight=4)
+        right_frame.rowconfigure(3, weight=2)
 
-        self._build_setpoint_panel(left_frame)
         self._build_graph_area(left_frame)
+        self._build_setpoint_panel(right_frame)
         self._build_showcase(right_frame)
 
         self.result_q = queue.Queue()
@@ -172,13 +174,13 @@ class App(tk.Tk):
         canvas = FigureCanvasTkAgg(fig, master=parent)
         self.canvas_widget = canvas.get_tk_widget()
         self.canvas_widget.configure(bg=BG_COLOR, highlightthickness=0)
-        self.canvas_widget.grid(row=1, column=0, sticky="nsew")
+        self.canvas_widget.grid(row=0, column=0, sticky="nsew")
         self.canvas = canvas
         self.canvas.draw_idle()
 
     def _build_setpoint_panel(self, parent: tk.Frame) -> None:
         panel = tk.Frame(parent, bg=PANEL_COLOR, bd=0, relief="flat", padx=24, pady=24)
-        panel.grid(row=0, column=0, sticky="nw", pady=(0, 18))
+        panel.grid(row=0, column=0, sticky="new", pady=(0, 18))
         panel.columnconfigure(0, weight=1)
 
         title = tk.Label(
@@ -212,12 +214,12 @@ class App(tk.Tk):
         sections = [
             ("デバイス1", DEVICE1_IMAGE_PATH, "熱風循環式エアヒーター\nLHS 410 SF-R"),
             ("デバイス2", DEVICE2_IMAGE_PATH, "熱風循環式高圧送風機\nチヌーク"),
-            ("ロゴ", LOGO_IMAGE_PATH, "企業ロゴ"),
+            ("ロゴ", LOGO_IMAGE_PATH, None),
         ]
 
         for idx, (_, path, caption) in enumerate(sections):
             frame = tk.Frame(parent, bg=PANEL_COLOR, padx=16, pady=16)
-            frame.grid(row=idx, column=0, sticky="nsew", pady=(0 if idx == 0 else 18, 0))
+            frame.grid(row=idx + 1, column=0, sticky="nsew", pady=(0 if idx == 0 else 18, 0))
             frame.columnconfigure(0, weight=1)
             frame.rowconfigure(0, weight=1)
 
@@ -226,15 +228,16 @@ class App(tk.Tk):
             label.image = image
             label.grid(row=0, column=0, sticky="nsew")
 
-            caption_label = tk.Label(
-                frame,
-                text=caption,
-                font=("Yu Gothic UI", 18, "bold" if idx < 2 else "normal"),
-                fg=TEXT_PRIMARY,
-                bg=PANEL_COLOR,
-                justify="center",
-            )
-            caption_label.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+            if caption:
+                caption_label = tk.Label(
+                    frame,
+                    text=caption,
+                    font=("Yu Gothic UI", 18, "bold" if idx < 2 else "normal"),
+                    fg=TEXT_PRIMARY,
+                    bg=PANEL_COLOR,
+                    justify="center",
+                )
+                caption_label.grid(row=1, column=0, sticky="ew", pady=(12, 0))
 
     def _load_image(self, path: Optional[str], width: int, height: int) -> tk.PhotoImage:
         if path:
