@@ -17,6 +17,7 @@ import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.dates import DateFormatter
+from matplotlib.ticker import FuncFormatter
 
 try:
     from PIL import Image, ImageTk
@@ -180,7 +181,7 @@ class App(tk.Tk):
                 spine.set_color("#1e293b")
             ax.grid(True, color=GRID_COLOR, alpha=0.55, linewidth=1.2)
 
-        self.ax_temp.set_ylabel("温度 (℃)", color=TEXT_PRIMARY, labelpad=18)
+        self.ax_temp.set_ylabel("温度 [℃]", color=TEXT_PRIMARY, labelpad=18)
         self.ax_temp.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
         self.ax_temp.tick_params(axis="x", which="both", labelbottom=False)
 
@@ -189,6 +190,13 @@ class App(tk.Tk):
 
         (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=4.0)
         (self.power_line,) = self.ax_power.plot([], [], color=POWER_COLOR, linewidth=4.2, label="Average Power")
+
+        self._power_unit = "W"
+        self._power_key_pressed = False
+        self._power_kw_formatter = FuncFormatter(lambda value, _: f"{value / 1000:.2f}")
+        self._power_watt_formatter = self.ax_power.yaxis.get_major_formatter()
+        self.bind("<KeyPress-k>", self._on_power_unit_key_press)
+        self.bind("<KeyRelease-k>", self._on_power_unit_key_release)
 
         self.ax_temp.set_title("温度の推移", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16)
         self.ax_power.set_title("1分間の平均消費電力", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16,)
@@ -532,6 +540,32 @@ class App(tk.Tk):
 
         if not self.stop_evt.is_set():
             self.after(120, self.drain_results)
+
+    # ------------------------------------------------------------------
+    def _on_power_unit_key_press(self, event: tk.Event) -> None:
+        if getattr(event, "keysym", "").lower() != "k":
+            return
+        if self._power_key_pressed:
+            return
+        self._power_key_pressed = True
+        self._toggle_power_axis_units()
+
+    def _on_power_unit_key_release(self, event: tk.Event) -> None:
+        if getattr(event, "keysym", "").lower() == "k":
+            self._power_key_pressed = False
+
+    def _toggle_power_axis_units(self) -> None:
+        self._power_unit = "kW" if self._power_unit == "W" else "W"
+        if self._power_unit == "kW":
+            self.ax_power.set_ylabel("平均消費電力 [kW]", color=TEXT_PRIMARY, labelpad=20)
+            self.ax_power.yaxis.set_major_formatter(self._power_kw_formatter)
+        else:
+            self.ax_power.set_ylabel("平均消費電力 [W]", color=TEXT_PRIMARY, labelpad=20)
+            self.ax_power.yaxis.set_major_formatter(self._power_watt_formatter)
+
+        self.ax_power.relim()
+        self.ax_power.autoscale_view()
+        self.canvas.draw_idle()
 
     # ------------------------------------------------------------------
     def on_close(self) -> None:
