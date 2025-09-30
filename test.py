@@ -129,7 +129,7 @@ class App(tk.Tk):
         gs = fig.add_gridspec(2, 1, hspace=0.32)
         self.ax_temp = fig.add_subplot(gs[0])
         self.ax_power = fig.add_subplot(gs[1], sharex=self.ax_temp)
-        fig.subplots_adjust(left=0.06, right=0.99, top=0.94, bottom=0.12)
+        fig.subplots_adjust(left=0.1, right=0.95, top=0.95, bottom=0.05)
 
         for ax in (self.ax_temp, self.ax_power):
             ax.set_facecolor(PANEL_COLOR)
