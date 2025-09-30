@@ -26,14 +26,14 @@ VOLTAGE_V = 200.0        # ★ 電圧[Volt]（可変にしたい場合はここ�
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PV / SV / Energy(Last 1 min) Monitor (CompoWay/F)")
+        self.title("Temperature / Setpoint / Energy Monitor (CompoWay/F)")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # データ保持
         self.t0 = dt.datetime.now()
-        self.times_pv, self.vals_pv = [], []
+        self.times_temp, self.vals_temp = [], []
         self.times_i,  self.vals_i  = [], []   # 電流(A)の時系列（生データ保持）
-        self.times_e,  self.vals_e  = [], []   # 「直近1分エネルギー[kWh]」の時系列（値自体は1分窓だが履歴は開始から保持）
+        self.times_energy, self.vals_energy = [], []  # 直近1分の消費電力量[Wh]の推移
         self.sv_value = None
 
         # ドライバ
@@ -49,26 +49,26 @@ class App(tk.Tk):
 
         # ===== UI =====
         top = ttk.Frame(self, padding=8); top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(top, text="SV (Set Value):", font=("TkDefaultFont", 12, "bold")).pack(side=tk.LEFT)
-        self.lbl_sv = ttk.Label(top, text="--", font=("TkDefaultFont", 12))
+        ttk.Label(top, text="SV (Set Value, °C):", font=("TkDefaultFont", 12, "bold")).pack(side=tk.LEFT)
+        self.lbl_sv = ttk.Label(top, text="-- °C", font=("TkDefaultFont", 12))
         self.lbl_sv.pack(side=tk.LEFT, padx=(8, 0))
 
         fig = Figure(figsize=(8, 5), dpi=100)
-        self.ax_pv = fig.add_subplot(211)
-        self.ax_e  = fig.add_subplot(212)
+        self.ax_temp = fig.add_subplot(211)
+        self.ax_energy = fig.add_subplot(212)
 
-        self.ax_pv.set_title("PV (Process Value)")
-        self.ax_pv.set_xlabel("Time")
-        self.ax_pv.set_ylabel("PV (raw)")
-        self.ax_pv.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
+        self.ax_temp.set_title("Temperature trend")
+        self.ax_temp.set_xlabel("Time")
+        self.ax_temp.set_ylabel("Temperature (°C)")
+        self.ax_temp.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
 
-        self.ax_e.set_title("Energy over last 1 min (kWh)")
-        self.ax_e.set_xlabel("Time")
-        self.ax_e.set_ylabel("kWh (rolling 1 min)")
-        self.ax_e.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
+        self.ax_energy.set_title("Energy consumption (last 1 min)")
+        self.ax_energy.set_xlabel("Time")
+        self.ax_energy.set_ylabel("Energy (Wh)")
+        self.ax_energy.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
 
-        (self.line_pv,) = self.ax_pv.plot([], [], linewidth=1.5)
-        (self.line_e,)  = self.ax_e.plot([], [], linewidth=1.5)
+        (self.line_temp,) = self.ax_temp.plot([], [], linewidth=1.5)
+        (self.line_energy,) = self.ax_energy.plot([], [], linewidth=1.5)
 
         self.canvas = FigureCanvasTkAgg(fig, master=self)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -82,13 +82,13 @@ class App(tk.Tk):
         # UI 更新タイマー
         self.after(100, self.drain_results)
 
-    # ---- ユーティリティ：直近1分のエネルギー[kWh]を台形則で積分 ----
+    # ---- ユーティリティ：直近1分のエネルギー[Wh]を台形則で積分 ----
     @staticmethod
-    def _integrate_energy_kwh(times, currents, now, voltage_v, window_sec=60.0):
+    def _integrate_energy_wh(times, currents, now, voltage_v, window_sec=60.0):
         """
         times: [datetime,...], currents: [A,...]（同じ長さ、単調増加想定）
-        区間 [now - window_sec, now] のエネルギーを台形則で求める（kWh）
-        力率=1 を仮定し P[W] = V * I。E[Wh] = ∫ P dt / 3600、kWh=Wh/1000
+        区間 [now - window_sec, now] のエネルギーを台形則で求める（Wh）
+        力率=1 を仮定し P[W] = V * I。E[Wh] = ∫ P dt / 3600
         """
         if not times or not currents:
             return None
@@ -131,7 +131,7 @@ class App(tk.Tk):
             p_W = voltage_v * i_avg
             e_Wh += p_W * (dt_s / 3600.0)
 
-        return e_Wh / 1000.0  # kWh
+        return e_Wh
 
     # ---- バックグラウンド：シリアルI/O ----
     def poll_worker(self):
@@ -166,46 +166,51 @@ class App(tk.Tk):
 
                 # 生データ保持（履歴は開始からずっと保持）
                 if pv.get("value") is not None:
-                    self.times_pv.append(now); self.vals_pv.append(pv["value"])
+                    self.times_temp.append(now); self.vals_temp.append(pv["value"])
                 if cur.get("value") is not None:
                     self.times_i.append(now);  self.vals_i.append(cur["value"])
 
                 # SV表示
                 if sv.get("value") is not None:
                     self.sv_value = sv["value"]
-                    self.lbl_sv.config(text=str(self.sv_value))
+                    try:
+                        sv_value_float = float(self.sv_value)
+                        sv_text = f"{sv_value_float:.1f} °C"
+                    except (TypeError, ValueError):
+                        sv_text = str(self.sv_value)
+                    self.lbl_sv.config(text=sv_text)
 
-                # 直近1分エネルギー[kWh]を計算→履歴として蓄積（表示は開始→現在）
+                # 直近1分エネルギー[Wh]を計算→履歴として蓄積（表示は開始→現在）
                 if self.times_i:
-                    e_kWh = self._integrate_energy_kwh(
+                    energy_wh = self._integrate_energy_wh(
                         self.times_i, self.vals_i, now=now, voltage_v=VOLTAGE_V, window_sec=60.0
                     )
-                    if e_kWh is not None:
-                        self.times_e.append(now)
-                        self.vals_e.append(e_kWh)
+                    if energy_wh is not None:
+                        self.times_energy.append(now)
+                        self.vals_energy.append(energy_wh)
 
                 # === グラフ更新 ===
                 t_start = self.t0
                 t_end   = now
 
-                # PV（開始→現在）
-                if self.times_pv:
-                    self.line_pv.set_data(self.times_pv, self.vals_pv)
-                    self.ax_pv.set_xlim(t_start, t_end)
-                    ymin, ymax = min(self.vals_pv), max(self.vals_pv)
+                # 温度（開始→現在）
+                if self.times_temp:
+                    self.line_temp.set_data(self.times_temp, self.vals_temp)
+                    self.ax_temp.set_xlim(t_start, t_end)
+                    ymin, ymax = min(self.vals_temp), max(self.vals_temp)
                     if ymin == ymax:
                         ymin -= 1; ymax += 1
-                    self.ax_pv.set_ylim(ymin, ymax)
+                    self.ax_temp.set_ylim(ymin, ymax)
 
                 # Energy(rolling 1min の値を、開始→現在のX軸に沿って表示)
-                if self.times_e:
-                    self.line_e.set_data(self.times_e, self.vals_e)
-                    self.ax_e.set_xlim(t_start, t_end)
-                    ymin, ymax = min(self.vals_e), max(self.vals_e)
+                if self.times_energy:
+                    self.line_energy.set_data(self.times_energy, self.vals_energy)
+                    self.ax_energy.set_xlim(t_start, t_end)
+                    ymin, ymax = min(self.vals_energy), max(self.vals_energy)
                     if ymin == ymax:
                         pad = max(1e-6, ymax * 0.05)
                         ymin -= pad; ymax += pad
-                    self.ax_e.set_ylim(ymin, ymax)
+                    self.ax_energy.set_ylim(ymin, ymax)
 
                 self.canvas.draw_idle()
         except queue.Empty:
