@@ -184,14 +184,14 @@ class App(tk.Tk):
         self.ax_temp.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
         self.ax_temp.tick_params(axis="x", which="both", labelbottom=False)
 
-        self.ax_power.set_ylabel("電力消費量 (Wh)", color=TEXT_PRIMARY, labelpad=20)
+        self.ax_power.set_ylabel("平均消費電力 [W]", color=TEXT_PRIMARY, labelpad=20)
         self.ax_power.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
 
         (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=4.0)
-        (self.power_line,) = self.ax_power.plot([], [], color=POWER_COLOR, linewidth=4.2, label="消費電力量")
+        (self.power_line,) = self.ax_power.plot([], [], color=POWER_COLOR, linewidth=4.2, label="Average Power")
 
         self.ax_temp.set_title("温度の推移", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16)
-        self.ax_power.set_title("直近1分の消費電力量", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16)
+        self.ax_power.set_title("1分間の平均消費電力", color=TEXT_PRIMARY, fontweight="bold", fontsize=30, pad=16,)
 
         canvas = FigureCanvasTkAgg(fig, master=parent)
         self.canvas_widget = canvas.get_tk_widget()
@@ -369,14 +369,14 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------
     @staticmethod
-    def _integrate_power_wh(
+    def _compute_average_power_w(
         times: List[dt.datetime],
         currents: List[float],
         now: dt.datetime,
         voltage_v: float,
         window_sec: float = 60.0,
     ) -> float:
-        if not times or not currents:
+        if not times or not currents or window_sec <= 0:
             return 0.0
 
         cutoff = now - dt.timedelta(seconds=window_sec)
@@ -417,7 +417,7 @@ class App(tk.Tk):
         if pts[-1][0] < now:
             pts.append((now, pts[-1][1]))
 
-        energy_wh = 0.0
+        total_current_seconds = 0.0
         for idx in range(len(pts) - 1):
             t0, i0 = pts[idx]
             t1, i1 = pts[idx + 1]
@@ -425,10 +425,10 @@ class App(tk.Tk):
                 continue
             dt_seconds = (t1 - t0).total_seconds()
             avg_current = 0.5 * (i0 + i1)
-            power_w = voltage_v * avg_current
-            energy_wh += power_w * (dt_seconds / 3600.0)
+            total_current_seconds += avg_current * dt_seconds
 
-        return energy_wh
+        average_current = total_current_seconds / window_sec
+        return voltage_v * average_current
 
     # ------------------------------------------------------------------
     def poll_worker(self) -> None:
@@ -487,7 +487,7 @@ class App(tk.Tk):
                         self.current_times.append(now)
                         self.currents.append(current_val)
 
-                        energy_wh = self._integrate_power_wh(
+                        avg_power_w = self._compute_average_power_w(
                             self.current_times,
                             self.currents,
                             now,
@@ -496,7 +496,7 @@ class App(tk.Tk):
                         )
 
                         self.power_times.append(now)
-                        self.power_values.append(energy_wh)
+                        self.power_values.append(avg_power_w)
 
                         cutoff = now - dt.timedelta(seconds=120)
                         while self.current_times and self.current_times[0] < cutoff:
