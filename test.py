@@ -137,7 +137,16 @@ class App(tk.Tk):
 
         self.after(100, self.drain_results)
 
+        # ==== フルスクリーン起動 & ESCで解除 ====
+        self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))  # ESC で解除
+        self.bind("<F11>", self.toggle_fullscreen)  # ← トグル機能も登録
+
     # ------------------------------------------------------------------
+    def toggle_fullscreen(self, event=None):
+        """F11キーなどでフルスクリーン ⇄ 通常表示を切り替える"""
+        is_full = self.attributes("-fullscreen")
+        self.attributes("-fullscreen", not is_full)
+
     def _build_graph_area(self, parent: tk.Frame) -> None:
         fig = Figure(figsize=(12.4, 8.2), dpi=100)
         fig.patch.set_facecolor(BG_COLOR)
