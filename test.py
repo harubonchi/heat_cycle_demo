@@ -99,12 +99,12 @@ class App(tk.Tk):
         self.rowconfigure(0, weight=1)
 
         left_frame = tk.Frame(self, bg=BG_COLOR)
-        left_frame.grid(row=0, column=0, sticky="nsew", padx=(24, 8), pady=24)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(16, 6), pady=16)
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(0, weight=1)
 
         right_frame = tk.Frame(self, bg=BG_COLOR)
-        right_frame.grid(row=0, column=1, sticky="nsew", padx=(8, 24), pady=24)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 16), pady=16)
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=0)
         right_frame.rowconfigure(1, weight=4)
@@ -124,12 +124,12 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------
     def _build_graph_area(self, parent: tk.Frame) -> None:
-        fig = Figure(figsize=(12.4, 7.6), dpi=100)
+        fig = Figure(figsize=(12.4, 8.2), dpi=100)
         fig.patch.set_facecolor(BG_COLOR)
-        gs = fig.add_gridspec(2, 1, hspace=0.36)
+        gs = fig.add_gridspec(2, 1, hspace=0.32)
         self.ax_temp = fig.add_subplot(gs[0])
         self.ax_power = fig.add_subplot(gs[1], sharex=self.ax_temp)
-        fig.subplots_adjust(left=0.06, right=0.99, top=0.95, bottom=0.12)
+        fig.subplots_adjust(left=0.06, right=0.99, top=0.94, bottom=0.12)
 
         for ax in (self.ax_temp, self.ax_power):
             ax.set_facecolor(PANEL_COLOR)
@@ -149,28 +149,19 @@ class App(tk.Tk):
         (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=4.0)
         (self.power_line,) = self.ax_power.plot([], [], color=POWER_COLOR, linewidth=4.2, label="消費電力量")
 
-        self.ax_temp.text(
-            0.5,
-            -0.22,
+        self.ax_temp.set_title(
             "温度の推移",
-            transform=self.ax_temp.transAxes,
             color=TEXT_PRIMARY,
             fontweight="bold",
             fontsize=24,
-            ha="center",
-            va="top",
+            pad=16,
         )
-
-        self.ax_power.text(
-            0.5,
-            -0.26,
+        self.ax_power.set_title(
             "直近1分相当の消費電力量",
-            transform=self.ax_power.transAxes,
             color=TEXT_PRIMARY,
             fontweight="bold",
             fontsize=24,
-            ha="center",
-            va="top",
+            pad=16,
         )
 
         canvas = FigureCanvasTkAgg(fig, master=parent)
