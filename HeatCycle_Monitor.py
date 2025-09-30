@@ -58,7 +58,7 @@ class App(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("リアルタイム温度・電力モニター")
+        self.title("HeatCycle Monitor")
         self.configure(bg=BG_COLOR)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
