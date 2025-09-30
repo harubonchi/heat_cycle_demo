@@ -124,12 +124,12 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------
     def _build_graph_area(self, parent: tk.Frame) -> None:
-        fig = Figure(figsize=(12.4, 7), dpi=100)
+        fig = Figure(figsize=(12.4, 7.6), dpi=100)
         fig.patch.set_facecolor(BG_COLOR)
-        gs = fig.add_gridspec(2, 1, hspace=0.48)
+        gs = fig.add_gridspec(2, 1, hspace=0.36)
         self.ax_temp = fig.add_subplot(gs[0])
         self.ax_power = fig.add_subplot(gs[1], sharex=self.ax_temp)
-        fig.subplots_adjust(left=0.07, right=0.985, top=0.94, bottom=0.16)
+        fig.subplots_adjust(left=0.06, right=0.99, top=0.95, bottom=0.12)
 
         for ax in (self.ax_temp, self.ax_power):
             ax.set_facecolor(PANEL_COLOR)
@@ -217,11 +217,11 @@ class App(tk.Tk):
             frame.rowconfigure(0, weight=1)
 
             if idx == 0:
-                img_width, img_height = 340, 260
+                img_width, img_height = 372, 284
             elif idx == 1:
-                img_width, img_height = 320, 220
+                img_width, img_height = 352, 242
             else:
-                img_width, img_height = 280, 140
+                img_width, img_height = 312, 160
 
             image = self._load_image(path, width=img_width, height=img_height)
             label = tk.Label(frame, image=image, bg=PANEL_COLOR)
