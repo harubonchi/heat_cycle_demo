@@ -21,6 +21,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib.dates import DateFormatter
 
+from PIL import Image, ImageTk
+
 import japanize_matplotlib  # noqa: F401  # フォントを日本語対応させる
 
 from compowayf_driver import CompoWayFDriver
