@@ -7,11 +7,13 @@ import sys
 import os
 import time
 import datetime as dt
+import math
 import threading
 import queue
 import tkinter as tk
 from tkinter import messagebox
 import tkinter.font as tkfont
+from fractions import Fraction
 from typing import List, Optional
 
 import matplotlib
@@ -242,7 +244,37 @@ class App(tk.Tk):
     def _load_image(self, path: Optional[str], width: int, height: int) -> tk.PhotoImage:
         if path:
             try:
-                return tk.PhotoImage(file=path)
+                image = tk.PhotoImage(file=path)
+                img_width = image.width() or 1
+                img_height = image.height() or 1
+
+                needs_resize = img_width > width or img_height > height
+                if needs_resize:
+                    scale = min(width / img_width, height / img_height)
+                    scale = max(scale, 0.0)
+                    if scale < 1.0:
+                        frac = Fraction(scale).limit_denominator(100)
+                        numerator = max(1, frac.numerator)
+                        denominator = max(1, frac.denominator)
+
+                        if numerator < denominator:
+                            image = image.zoom(numerator)
+                            image = image.subsample(denominator)
+                        else:
+                            shrink_factor = max(2, math.ceil(img_width / width), math.ceil(img_height / height))
+                            image = image.subsample(shrink_factor)
+
+                        final_width = image.width() or 1
+                        final_height = image.height() or 1
+                        adjust_factor = max(
+                            1,
+                            math.ceil(final_width / width),
+                            math.ceil(final_height / height),
+                        )
+                        if adjust_factor > 1:
+                            image = image.subsample(adjust_factor)
+
+                return image
             except tk.TclError:
                 pass
 
