@@ -6,6 +6,7 @@
 import sys
 import os
 import time
+import math
 import datetime as dt
 import threading
 import queue
@@ -16,7 +17,6 @@ from typing import Dict, List, Optional
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-from matplotlib.dates import DateFormatter
 from matplotlib.ticker import FuncFormatter
 
 from PIL import Image, ImageTk
@@ -178,11 +178,12 @@ class App(tk.Tk):
             ax.grid(True, color=GRID_COLOR, alpha=0.55, linewidth=1.2)
 
         self.ax_temp.set_ylabel("温度 [℃]", color=TEXT_PRIMARY, labelpad=18)
-        self.ax_temp.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
+        elapsed_formatter = FuncFormatter(self._format_elapsed_time)
+        self.ax_temp.xaxis.set_major_formatter(elapsed_formatter)
         self.ax_temp.tick_params(axis="x", which="both", labelbottom=False)
 
         self.ax_power.set_ylabel("平均消費電力 [W]", color=TEXT_PRIMARY, labelpad=20)
-        self.ax_power.xaxis.set_major_formatter(DateFormatter("%H:%M:%S"))
+        self.ax_power.xaxis.set_major_formatter(elapsed_formatter)
 
         (self.temp_line,) = self.ax_temp.plot([], [], color=TEMP_COLOR, linewidth=4.0)
         (self.power_line,) = self.ax_power.plot([], [], color=POWER_COLOR, linewidth=4.2, label="Average Power")
@@ -203,6 +204,17 @@ class App(tk.Tk):
         self.canvas_widget.grid(row=0, column=0, sticky="nsew")
         self.canvas = canvas
         self.canvas.draw_idle()
+
+    # ------------------------------------------------------------------
+    def _format_elapsed_time(self, value: float, _: int = 0) -> str:
+        if not math.isfinite(value) or value < 0:
+            return ""
+        total_seconds = int(round(value))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
 
     # ------------------------------------------------------------------
     def _build_setpoint_panel(self, parent: tk.Frame) -> None:
@@ -507,9 +519,14 @@ class App(tk.Tk):
                             self.current_times.pop(0)
                             self.currents.pop(0)
 
+                elapsed_temp: List[float] = []
+                elapsed_power: List[float] = []
+
                 if self.temp_times:
-                    self.temp_line.set_data(self.temp_times, self.temp_values)
-                    self.ax_temp.set_xlim(self.t0, now)
+                    elapsed_temp = [
+                        (ts - self.t0).total_seconds() for ts in self.temp_times
+                    ]
+                    self.temp_line.set_data(elapsed_temp, self.temp_values)
                     t_min = min(self.temp_values)
                     t_max = max(self.temp_values)
                     if t_min == t_max:
@@ -519,8 +536,10 @@ class App(tk.Tk):
                     self.ax_temp.set_ylim(t_min - padding, t_max + padding)
 
                 if self.power_times:
-                    self.power_line.set_data(self.power_times, self.power_values)
-                    self.ax_power.set_xlim(self.t0, now)
+                    elapsed_power = [
+                        (ts - self.t0).total_seconds() for ts in self.power_times
+                    ]
+                    self.power_line.set_data(elapsed_power, self.power_values)
                     p_min = min(self.power_values)
                     p_max = max(self.power_values)
                     if p_min == p_max:
@@ -529,6 +548,18 @@ class App(tk.Tk):
                         p_max += pad
                     padding = max(0.05, (p_max - p_min) * 0.15)
                     self.ax_power.set_ylim(p_min - padding, p_max + padding)
+
+                if elapsed_temp or elapsed_power:
+                    x_candidates = [1.0]
+                    if elapsed_temp:
+                        x_candidates.append(elapsed_temp[-1])
+                    if elapsed_power:
+                        x_candidates.append(elapsed_power[-1])
+                    x_max = max(x_candidates)
+                    if elapsed_temp:
+                        self.ax_temp.set_xlim(0.0, x_max)
+                    if elapsed_power:
+                        self.ax_power.set_xlim(0.0, x_max)
 
                 self.canvas.draw_idle()
         except queue.Empty:
