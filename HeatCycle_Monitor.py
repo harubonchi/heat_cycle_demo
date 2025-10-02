@@ -38,7 +38,7 @@ VOLTAGE_V = 200.0  # 指定通り電圧は固定
 # ---- デザイン設定 ----
 BG_COLOR = "#060b16"
 PANEL_COLOR = "#0e1626"
-ACCENT_COLOR = "#38bdf8"
+ACCENT_COLOR = "#ef4444"
 TEXT_PRIMARY = "#f8fafc"
 TEXT_SECONDARY = "#94a3b8"
 GRID_COLOR = "#1f2a44"
