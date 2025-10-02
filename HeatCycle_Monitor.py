@@ -50,7 +50,7 @@ POWER_COLOR = "#2563eb"
 script_dir = os.path.dirname(os.path.abspath(__file__))
 DEVICE1_IMAGE_PATH = os.path.join(script_dir, "product_1.png")
 DEVICE2_IMAGE_PATH = os.path.join(script_dir, "product_2.png")
-LOGO_IMAGE_PATH = os.path.join(script_dir, "Leister_Logo.png")
+LOGO_IMAGE_PATH = os.path.join(script_dir, "Leister_Logo_hq.png")
 
 
 class App(tk.Tk):
